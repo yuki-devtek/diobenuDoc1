@@ -1,0 +1,56 @@
+#Requires -Version 5.1
+<#
+.NOTES
+  Windows PowerShell 5.1 (powershell.exe). Uses in-box .NET Framework; no extra runtime install.
+#>
+# .\m7k_qb.ps1 -InputPath .\2_Ai.ps1 -OutputPath .\2_Ai.ps1.enc
+# .\m7k_rv.ps1 -EncryptedPath .\2_Ai.ps1.enc
+param(
+    [Parameter(Mandatory)][string]$EncryptedPath,
+    [string]$Password = '@@@diobenu2yukii@@@',
+    [hashtable]$ArgumentList
+)
+
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path -LiteralPath $EncryptedPath -PathType Leaf)) { throw "File not found: $EncryptedPath" }
+if (-not $Password) { throw 'Pass -Password (non-empty).' }
+
+$blob = [System.IO.File]::ReadAllBytes($EncryptedPath)
+if ($blob.Length -lt 5 + 16 + 16 + 1) { throw 'Invalid file (too small).' }
+$magic = [System.Text.Encoding]::ASCII.GetString($blob[0..4])
+if ($magic -ne 'PS1E1') { throw 'Invalid file (bad header).' }
+
+$salt = $blob[5..20]
+$iv = $blob[21..36]
+$cipher = New-Object byte[] ($blob.Length - 37)
+[Array]::Copy($blob, 37, $cipher, 0, $cipher.Length)
+
+$pbkdf2 = New-Object System.Security.Cryptography.Rfc2898DeriveBytes(
+    [System.Text.Encoding]::UTF8.GetBytes($Password), $salt, 120000
+)
+try {
+    $key = $pbkdf2.GetBytes(32)
+} finally { $pbkdf2.Dispose() }
+
+$aes = [System.Security.Cryptography.Aes]::Create()
+try {
+    $aes.KeySize = 256
+    $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+    $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+    $aes.Key = $key
+    $aes.IV = $iv
+    $dec = $aes.CreateDecryptor()
+    $plain = $dec.TransformFinalBlock($cipher, 0, $cipher.Length)
+} finally {
+    if ($aes) { $aes.Dispose() }
+}
+
+$scriptText = [System.Text.Encoding]::UTF8.GetString($plain)
+[Array]::Clear($plain, 0, $plain.Length)
+
+$sb = [scriptblock]::Create($scriptText)
+if ($ArgumentList -and $ArgumentList.Count -gt 0) {
+    & $sb @ArgumentList
+} else {
+    & $sb
+}
