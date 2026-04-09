@@ -1,13 +1,7 @@
-#Requires -Version 5.1
-<#
-.NOTES
-  Windows PowerShell 5.1 (powershell.exe). Uses in-box .NET Framework; no extra runtime install.
-#>
-# .\m7k_qb.ps1 -InputPath .\2_Ai.ps1 -OutputPath .\2_Ai.ps1.enc
-# .\m7k_rv.ps1 -EncryptedPath .\2_Ai.ps1.enc
 param(
     [Parameter(Mandatory)][string]$EncryptedPath,
     [string]$Password = '@@@diobenu2yukii@@@',
+    [string]$OutPath,
     [hashtable]$ArgumentList
 )
 
@@ -47,6 +41,20 @@ try {
 
 $scriptText = [System.Text.Encoding]::UTF8.GetString($plain)
 [Array]::Clear($plain, 0, $plain.Length)
+
+if (-not [string]::IsNullOrWhiteSpace($OutPath)) {
+    $resolvedOutPath = $OutPath
+    if (-not [System.IO.Path]::IsPathRooted($resolvedOutPath)) {
+        $resolvedOutPath = Join-Path (Get-Location).ProviderPath $resolvedOutPath
+    }
+    $outDir = Split-Path -Parent $resolvedOutPath
+    if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
+        New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllText($resolvedOutPath, $scriptText, [System.Text.Encoding]::UTF8)
+    Write-Host "Decrypted script written to: $resolvedOutPath"
+    return
+}
 
 $sb = [scriptblock]::Create($scriptText)
 if ($ArgumentList -and $ArgumentList.Count -gt 0) {
