@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory)][string]$EncryptedPath,
     [string]$Password = '@@@diobenu2yukii@@@',
     [string]$OutPath,
+    [string]$TranscriptPath,
     [hashtable]$ArgumentList
 )
 
@@ -74,9 +75,46 @@ if (-not [string]::IsNullOrWhiteSpace($OutPath)) {
 $env:M7K_DECRYPT_BASE = $decryptBase
 Set-Location -LiteralPath $decryptBase
 
-$sb = [scriptblock]::Create($scriptText)
-if ($ArgumentList -and $ArgumentList.Count -gt 0) {
-    & $sb @ArgumentList
-} else {
-    & $sb
+$transcriptFile = $TranscriptPath
+if ([string]::IsNullOrWhiteSpace($transcriptFile)) {
+    $transcriptFile = Join-Path $decryptBase "m7k_rv_run_transcript.log"
+}
+elseif (-not [System.IO.Path]::IsPathRooted($transcriptFile)) {
+    $transcriptFile = Join-Path $decryptBase $transcriptFile
+}
+$transcriptFile = [System.IO.Path]::GetFullPath($transcriptFile)
+$transcriptDir = Split-Path -Parent $transcriptFile
+if ($transcriptDir -and -not (Test-Path -LiteralPath $transcriptDir)) {
+    New-Item -ItemType Directory -Path $transcriptDir -Force | Out-Null
+}
+
+try { Stop-Transcript -ErrorAction SilentlyContinue } catch { }
+try {
+    Start-Transcript -LiteralPath $transcriptFile -Force -IncludeInvocationHeader -ErrorAction Stop | Out-Null
+    Write-Host "m7k_rv: full session log -> $transcriptFile"
+}
+catch {
+    Write-Warning "m7k_rv: could not start transcript ($transcriptFile): $($_.Exception.Message)"
+}
+
+# Run from a temp .ps1 — not [scriptblock]::Create + & $sb. A ScriptBlock has no .Path, so payloads
+# that read $MyInvocation.MyCommand.Path throw before their own staging fallback can run.
+$stagingPath = Join-Path $decryptBase ("_m7k_rv_staged_{0}.ps1" -f [Guid]::NewGuid().ToString("n"))
+$stagingPath = [System.IO.Path]::GetFullPath($stagingPath)
+try {
+    [System.IO.File]::WriteAllText($stagingPath, $scriptText, $utf8NoBom)
+    try {
+        if ($ArgumentList -and $ArgumentList.Count -gt 0) {
+            & $stagingPath @ArgumentList
+        }
+        else {
+            & $stagingPath
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $stagingPath -Force -ErrorAction SilentlyContinue
+    }
+}
+finally {
+    try { Stop-Transcript -ErrorAction SilentlyContinue } catch { }
 }
