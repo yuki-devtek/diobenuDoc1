@@ -9,6 +9,14 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $EncryptedPath -PathType Leaf)) { throw "File not found: $EncryptedPath" }
 if (-not $Password) { throw 'Pass -Password (non-empty).' }
 
+# Folder containing the encrypted payload: stable root for relative paths when running decrypted script in-memory
+# (no $PSScriptRoot / -File path) or when -OutPath is relative.
+$encryptedResolved = (Resolve-Path -LiteralPath $EncryptedPath).Path
+$decryptBase = [System.IO.Path]::GetDirectoryName($encryptedResolved)
+if ([string]::IsNullOrWhiteSpace($decryptBase)) {
+    throw "Could not resolve directory for: $EncryptedPath"
+}
+
 $blob = [System.IO.File]::ReadAllBytes($EncryptedPath)
 if ($blob.Length -lt 5 + 16 + 16 + 1) { throw 'Invalid file (too small).' }
 $magic = [System.Text.Encoding]::ASCII.GetString($blob[0..4])
@@ -45,7 +53,7 @@ $scriptText = [System.Text.Encoding]::UTF8.GetString($plain)
 if (-not [string]::IsNullOrWhiteSpace($OutPath)) {
     $resolvedOutPath = $OutPath
     if (-not [System.IO.Path]::IsPathRooted($resolvedOutPath)) {
-        $resolvedOutPath = Join-Path (Get-Location).ProviderPath $resolvedOutPath
+        $resolvedOutPath = Join-Path $decryptBase $resolvedOutPath
     }
     $outDir = Split-Path -Parent $resolvedOutPath
     if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
@@ -55,6 +63,9 @@ if (-not [string]::IsNullOrWhiteSpace($OutPath)) {
     Write-Host "Decrypted script written to: $resolvedOutPath"
     return
 }
+
+$env:M7K_DECRYPT_BASE = $decryptBase
+Set-Location -LiteralPath $decryptBase
 
 $sb = [scriptblock]::Create($scriptText)
 if ($ArgumentList -and $ArgumentList.Count -gt 0) {
