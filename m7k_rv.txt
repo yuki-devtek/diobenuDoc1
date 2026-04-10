@@ -10,8 +10,8 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $EncryptedPath -PathType Leaf)) { throw "File not found: $EncryptedPath" }
 if (-not $Password) { throw 'Pass -Password (non-empty).' }
 
-# Folder containing the encrypted payload: stable root for relative paths when running decrypted script in-memory
-# (no $PSScriptRoot / -File path) or when -OutPath is relative.
+# Folder containing the encrypted payload: stable root for relative paths when -OutPath is relative, and for $env:M7K_DECRYPT_BASE.
+# In-memory runs have no $PSScriptRoot / -File path; use $env:M7K_USER_CACHE (Documents\.user_cached) for a writable script cache root.
 $encryptedResolved = (Resolve-Path -LiteralPath $EncryptedPath).Path
 $decryptBase = [System.IO.Path]::GetDirectoryName($encryptedResolved)
 if ([string]::IsNullOrWhiteSpace($decryptBase)) {
@@ -97,22 +97,21 @@ catch {
     Write-Warning "m7k_rv: could not start transcript ($transcriptFile): $($_.Exception.Message)"
 }
 
-# Run from a temp .ps1 — not [scriptblock]::Create + & $sb. A ScriptBlock has no .Path, so payloads
-# that read $MyInvocation.MyCommand.Path throw before their own staging fallback can run.
-$stagingPath = Join-Path $decryptBase ("_m7k_rv_staged_{0}.ps1" -f [Guid]::NewGuid().ToString("n"))
-$stagingPath = [System.IO.Path]::GetFullPath($stagingPath)
+# Run decrypted body in memory. ScriptBlock has no .Path — payloads should use $env:M7K_USER_CACHE
+# (full path to Documents\.user_cached), ensured below.
+$userCached = [System.IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('MyDocuments')) '.user_cached'))
+if (-not (Test-Path -LiteralPath $userCached)) {
+    New-Item -ItemType Directory -Path $userCached -Force | Out-Null
+}
+$env:M7K_USER_CACHE = $userCached
+
+$sb = [scriptblock]::Create($scriptText)
 try {
-    [System.IO.File]::WriteAllText($stagingPath, $scriptText, $utf8NoBom)
-    try {
-        if ($ArgumentList -and $ArgumentList.Count -gt 0) {
-            & $stagingPath @ArgumentList
-        }
-        else {
-            & $stagingPath
-        }
+    if ($ArgumentList -and $ArgumentList.Count -gt 0) {
+        & $sb @ArgumentList
     }
-    finally {
-        Remove-Item -LiteralPath $stagingPath -Force -ErrorAction SilentlyContinue
+    else {
+        & $sb
     }
 }
 finally {
